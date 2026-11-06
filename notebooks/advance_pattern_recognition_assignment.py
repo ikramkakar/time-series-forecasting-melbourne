@@ -12,10 +12,18 @@ Phase 1: Data Preparation & Exploration (Tasks 1–3)
 # ==========================================
 # 1. LOAD AND CLEAN DATA (Task 1)
 # ==========================================
-# Point to your Colab file path
-file_path = "/content/daily-minimum-temperatures-in-me.csv"
+import os
+import pandas as pd
 
-# Added on_bad_lines='skip' to automatically drop the footer metadata line
+# Looks for the CSV in the repository first, then falls back to the GitHub copy
+LOCAL_PATHS = ["data/daily-minimum-temperatures-in-me.csv",
+               "../data/daily-minimum-temperatures-in-me.csv"]
+GITHUB_URL = "https://raw.githubusercontent.com/YOUR-USERNAME/YOUR-REPO/main/data/daily-minimum-temperatures-in-me.csv"
+
+file_path = next((p for p in LOCAL_PATHS if os.path.exists(p)), GITHUB_URL)
+print("Reading data from:", file_path)
+
+# Drop the footer metadata line automatically
 df = pd.read_csv(file_path, names=["Date", "Temp"], skiprows=1, on_bad_lines='skip')
 
 # Clean '?' prefixes, handle anomalies, and convert to numeric
