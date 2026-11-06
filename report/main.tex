@@ -1,0 +1,442 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{float}
+\usepackage[font=small,labelfont=bf]{caption}
+\usepackage[hidelinks]{hyperref}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\renewcommand{\arraystretch}{1.15}
+\newcommand{\SiteType}{a small plant nursery in Melbourne}
+
+%% ------------------------------------------------------------------
+%% EDIT THESE FIVE ITEMS
+%% ------------------------------------------------------------------
+\newcommand{\GroupMembers}{Group members: (Ikram Kakar, ID: SAU/CSE/MSDSAI/2025/1015), (Amit Negi, ID:SAU/CSE/MSDSAI/2025/1003)}
+\newcommand{\SubmitDate}{14, November 2026}
+\newcommand{\GitHub}{https://github.com/ikramkakar/time-series-forecasting-melbourne}
+%\newcommand{\SiteType}{[site type]}
+%% ------------------------------------------------------------------
+
+% Figure helper: shows the PNG if it is uploaded, otherwise a grey placeholder box.
+\newcommand{\fig}[3][0.88\textwidth]{%
+  \begin{figure}[H]\centering
+  \IfFileExists{#2}{\includegraphics[width=#1]{#2}}{%
+    \fbox{\parbox[c][5.5cm][c]{0.85\textwidth}{\centering\itshape [Insert \detokenize{#2} here]}}}
+  \caption{#3}
+  \end{figure}}
+
+\begin{document}
+
+%% ---------------- Title page ----------------
+\begin{titlepage}
+\centering
+\vspace*{4cm}
+{\LARGE\bfseries Forecasting Overnight Minimum Temperature\\[4pt] to Decide When to Run Cold Protection\par}
+\vspace{1.2cm}
+{\large Time-Series Forecasting Project --- Advance Pattern Recognition\par}
+\vspace{2.2cm}
+{\large \GroupMembers\par}
+\vspace{4pt}
+{\large Submitted: \SubmitDate\par}
+\vspace{1cm}
+{\large Code and data repository: \GitHub\par}
+\end{titlepage}
+
+\section*{Management summary}
+\addcontentsline{toc}{section}{Management summary}
+\small
+\textbf{The problem.} A small plant nursery in Melbourne needs to decide each evening whether to protect its plants from cold during the night. Running heaters or using protective covers costs money and labour ($C$ per night), but failing to protect plants on a very cold night can cause damage ($L$ per missed night). This project uses historical daily minimum temperatures to predict the following night's temperature and help the nursery make better decisions. We define a cold night as a temperature below $6^\circ$C. This threshold is our assumption of where seedlings start to suffer damage, and we fixed it after counting the cold nights in the data. In the 548-night test period (July 1989 to December 1990), 49 nights (8.9\%) were cold.
+
+\textbf{The recommendation.} We tested several forecasting methods, including ARIMA, RNN and LSTM models. The ARIMA model with yearly seasonal information achieved the lowest prediction error (RMSE $2.18^\circ$C), while the LSTM produced very similar results ($2.21^\circ$C). However, accurate temperature predictions alone were not enough to identify the cold nights: the best single-value forecasts caught only 10 and 18 of the 49. Therefore, we also developed an LSTM prediction interval that estimates the lowest plausible temperature for the night. Our recommendation depends on the cost of missing a cold night compared with the cost of protecting plants. When a missed cold night costs more than about 7 to 10 times a night of protection, the nursery should use the LSTM interval rule: protect whenever the model's 10\% lower-quantile forecast is below $6^\circ$C. When the potential loss is smaller, a simple rule based on the previous night's temperature is just as good.
+
+\textbf{The expected saving.} On the 548 test nights, when the cost of a missed cold night was assumed to be ten times the cost of protection ($L/C=10$), the LSTM interval rule resulted in 263 cost units, compared with 490 units for doing nothing and 339 units for the simple persistence rule. This represents a \textbf{46\% saving} compared with doing nothing and a 22\% saving compared with the simple rule. Using illustrative costs of 20 units for protection and 200 units for a missed cold night, the total cost would be 5,260 units instead of 9,800 units, saving 4,540 units over the test period. These are assumed costs, not actual nursery expenses.
+
+\textbf{The risk.} The interval rule identified 46 of the 49 cold nights and missed three, but it protected on 233 of the 548 nights, so 187 of its alarms were unnecessary. The results also depend on the assumed costs. At $L/C=10$ a block bootstrap gives a saving of $+23\%$ to $+60\%$ against doing nothing (5th to 95th percentile), but only $-1\%$ to $+38\%$ against the simple rule. If a missed night is only about 5 times the cost of protection, the interval rule costs more than the simple rule (a median 28\% more). The study uses one test period and a relatively small number of cold nights, so the results should be treated as indicative rather than guaranteed savings.
+
+Overall, the project shows that forecasting can improve a practical decision, but the most suitable method depends on the cost of protection and the damage caused by cold weather.
+
+\begin{center}
+\begin{tabular}{lrrr}
+\toprule
+Test period, units of $C$ & $L/C=5$ & $L/C=10$ & $L/C=20$\\
+\midrule
+Do nothing & 245 & 490 & 980\\
+Persistence habit & 194 & 339 & 629\\
+LSTM point forecast rule & 184 & 339 & 649\\
+LSTM interval rule (10\% quantile) & 248 & 263 & 293\\
+\bottomrule
+\end{tabular}
+\end{center}
+\normalsize
+\newpage
+\tableofcontents
+\newpage
+%% ---------------- 1 Introduction ----------------
+\section{Introduction and decision context}
+This project forecasts the daily minimum temperature one day ahead and asks a practical question: when does a forecast change what an operator should do? The decision we study is whether \SiteType{} should run overnight cold protection (a heater or frost covers over cold-sensitive seedlings) on a given evening. Acting on a night costs $C$ (heating fuel, or the labour of putting covers on and taking them off). Failing to act on a night that turns out cold costs $L$ (seedlings that are damaged or lost, replanting, and delayed sales). Because we do not have a measured $L$ and $C$ for a real nursery, we express every result as a function of the ratio $L/C$ and show for which ratios a forecasting model is worth using.
+
+We define a cold night as a minimum below $6^\circ$C. We assume that cold-sensitive seedlings begin to suffer damage near this level; this is our assumption and not something we measured. We also looked at how many nights in the data fall below $0$, $2$, $4$ and $6^\circ$C before fixing the value (Section~\ref{sec:action}), because the test period has too few colder nights for a cost analysis. The threshold is therefore a stated assumption and not a result. All fourteen tasks in the course brief are covered: data analysis (Tasks 1 to 3), classical models (4 to 9), neural networks (10 and 11), and the decision, probabilistic forecast and risk analysis (12 to 14).
+
+All code, the data file and the result tables are in the repository at \GitHub.
+
+%% ---------------- 2 Data ----------------
+\section{Data and exploratory analysis}
+\subsection{Data and cleaning (Task 1)}
+We use daily minimum temperatures in Melbourne, Australia, from 1 January 1981 to 31 December 1990: 3,652 days (see reference~\cite{tsdl}). The raw file needed cleaning: some temperature values carried a ``?'' prefix, and a footer line of metadata sat at the end of the file. We removed the prefix, dropped the footer, converted dates and temperatures to proper types, enforced a continuous daily index and filled any gaps by linear interpolation. The series minimum is $0.0^\circ$C, and only 28 nights in the whole series are below $2^\circ$C.
+
+\subsection{Train, validation and test split (Task 3)}
+The series is split in time order, with no shuffling, and the same split is used by every model. Every model makes one-step-ahead predictions: to predict day $t$, it sees the true observations up to day $t-1$.
+
+\begin{table}[H]\centering
+\caption{Chronological split.}
+\begin{tabular}{lrll}
+\toprule
+Set & Days & From & To\\
+\midrule
+Training (70\%) & 2,556 & 1 Jan 1981 & 31 Dec 1987\\
+Validation (15\%) & 548 & 1 Jan 1988 & 1 Jul 1989\\
+Test (15\%) & 548 & 2 Jul 1989 & 31 Dec 1990\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The test window covers one and a half years, so it includes a full seasonal cycle. Test data were not used to choose any model setting; orders, harmonics, network settings and probability levels were selected on validation data.
+
+\subsection{Decomposition (Task 2)}
+An additive decomposition with a yearly period (365 days) gives the variance shares in Table~\ref{tab:decomp}. The yearly cycle dominates: it explains 57.8\% of the variance with a peak-to-trough swing of $11.98^\circ$C. The trend is almost flat (1.0\% of the variance, ranging only from $10.46$ to $12.20^\circ$C), which agrees with the unit root results in Section~\ref{sec:stationarity}. The three shares add to 97.8\%, not 100\%, because the trend and residual are undefined at the edges and the components are not exactly uncorrelated.
+
+\begin{table}[H]\centering
+\caption{Variance shares from the additive decomposition.}\label{tab:decomp}
+\begin{tabular}{lrl}
+\toprule
+Component & Share of variance & Note\\
+\midrule
+Seasonal & 57.8\% & Peak-to-trough $11.98^\circ$C\\
+Trend & 1.0\% & Range $10.46$ to $12.20^\circ$C\\
+Residual & 39.0\% & Mean 0.001, std $2.543^\circ$C\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\fig{fig_decomposition.png}{Additive decomposition into trend, seasonal and residual components.}
+
+\subsection{Autocorrelation (Task 2)}\label{classical_order}
+The raw autocorrelation decays slowly (0.765 at lag 1, 0.616 at lag 2, 0.570 at lag 3) even though the series is stationary; the slow decay comes from the seasonal cycle and not from a unit root. At lag 180 the autocorrelation is $-0.444$ and at lag 365 it is $+0.457$: half a year apart gives opposite seasons, a full year gives the same season. There is no weekly pattern: the value at lag 7 (0.556) simply continues the decay from lag 3, so we did not use a period-7 seasonal model. The residual after removing trend and season is not white noise: its autocorrelation is 0.496 at lag 1 and 0.177 at lag 2, then drops to about 0.07. A warm or cold anomaly therefore tends to persist for a few days, and this is the part a short autoregressive model can exploit.
+
+\fig{fig_acf_pacf.png}{ACF and PACF of the training series and of the decomposition residual.}
+\paragraph{Note: ACF and PACF.}
+The \textbf{ACF} at lag $k$ measures how strongly today's temperature is related to the temperature $k$ days earlier, including the indirect effect that passes through the days in between. The \textbf{PACF} measures only the direct link after removing those in-between days. We use both to judge how many past days a model needs. Because our PACF has no clean cut-off, we chose the model orders on the validation set (Section~\ref{classical_order}).
+\subsection{Stationarity (Tasks 6 and 7)}\label{sec:stationarity}
+On the training set, the augmented Dickey--Fuller test rejects a unit root (statistic $-3.928$, $p=0.0018$) and the KPSS test does not reject stationarity (statistic 0.116; the $p$-value of 0.10 is the limit of the lookup table, so it should be read as $p\ge 0.10$). The two tests, which have opposite null hypotheses, agree. We therefore use $d=0$. The yearly cycle is deterministic seasonality around a fixed pattern, not non-stationarity. The first-differenced, seasonally differenced and combined series also pass both tests (ADF statistics $-18.4$, $-18.7$ and $-15.8$), but differencing a stationary series is unnecessary and removes the persistence that short AR models rely on, so we did not difference the data.
+
+\begin{table}[H]\centering
+\caption{Unit root tests on the training set.}
+\begin{tabular}{lrrrr}
+\toprule
+Series & ADF stat & ADF $p$ & KPSS stat & KPSS $p$\\
+\midrule
+Raw & $-3.928$ & 0.0018 & 0.116 & $\ge 0.10$\\
+First difference ($d=1$) & $-18.445$ & 0.0000 & 0.296 & $\ge 0.10$\\
+Seasonal difference (365) & $-18.660$ & 0.0000 & 0.199 & $\ge 0.10$\\
+Seasonal + first & $-15.830$ & 0.0000 & 0.063 & $\ge 0.10$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Note: reading the unit root tables.}
+Table 3 reports two tests that ask opposite questions, so each one is a check on the other.
+\begin{itemize}
+  \item \textbf{ADF stat} is the test statistic of the augmented Dickey--Fuller test. Its null hypothesis is that the series has a unit root (it is non-stationary). The more negative the statistic, the stronger the evidence against a unit root. For a regression with a constant, the 5\% critical value is about $-2.86$ and the 1\% value about $-3.43$, so our raw value of $-3.928$ is clearly beyond both.
+  \item \textbf{ADF $p$} is the probability of seeing a statistic this extreme if a unit root were present. A value below 0.05 rejects the unit root, so we call the series stationary. Our raw series gives $p=0.0018$.
+  \item \textbf{KPSS stat} is the test statistic of the KPSS test. Its null hypothesis is the opposite one: the series is stationary around a constant level. The larger the statistic, the stronger the evidence against stationarity. The 10\% critical value is about 0.347, and all four of our statistics (0.296, 0.199, 0.116, 0.063) are below it.
+  \item \textbf{KPSS $p$} is the probability of seeing a statistic this large if the series were stationary. A small value (below 0.05) rejects stationarity. The \texttt{statsmodels} function only reports values between 0.01 and 0.10, so ``$\ge 0.10$'' means the $p$-value is at or above the limit of its lookup table and stationarity is not rejected.
+\end{itemize}
+We conclude that a series is stationary when ADF rejects its null (small $p$) \emph{and} KPSS does not reject its null (large $p$). Both tests were run on the training set only, with a constant term, the lag length of the ADF test chosen by AIC, and an automatic lag choice for KPSS.
+
+%% ---------------- 3 Classical ----------------
+\section{Classical (linear) models}\label{classical-orders}
+\subsection{Evaluation protocol}
+Each model is fitted on the training set only. Its parameters are then frozen and applied to the full series so that each prediction uses the true past values, which gives genuine one-step-ahead forecasts on validation and test. Reporting multi-step forecasts would be misleading here: an AR or ARMA forecast many days ahead collapses toward the mean. We report RMSE, MAE, MAPE, sMAPE and $R^2$. MAPE is reported because the brief asks for it, but it is unreliable for this series: on nights near $0^\circ$C the denominator is tiny and the error explodes, so we add sMAPE. A persistence forecast (tomorrow equals today) is the reference every model must beat.
+
+\subsection{Choosing $p$ and $q$ (Tasks 4 and 5)}
+The theory says $q$ is read from where the ACF cuts off and $p$ from where the PACF cuts off. Our PACF has no clean cut-off. With 2,556 training days the 95\% band is only $\pm 0.039$, and lags 1 to 9, 11 to 14 and 16 to 18 are all outside it (lag 1: 0.765, lag 2: 0.073, lag 3: 0.188, lag 4: 0.153). Because the PACF does not give a clear answer, we used the validation set. Table~\ref{tab:arma} shows pure AR($p$) and pure MA($q$) fits.
+
+\begin{table}[H]\centering
+\caption{Pure AR and MA models: AIC (training fit) and RMSE (validation, one-step-ahead).}\label{tab:arma}
+\begin{tabular}{rrrrr}
+\toprule
+Order & AR AIC & AR val RMSE & MA AIC & MA val RMSE\\
+\midrule
+1 & 12194.6 & 2.468 & 13049.8 & 3.069\\
+2 & 12183.2 & 2.456 & 12638.3 & 2.804\\
+3 & 12091.3 & 2.415 & 12490.2 & 2.660\\
+4 & 12032.7 & 2.405 & 12399.8 & 2.608\\
+5 & 11997.4 & 2.374 & 12328.3 & 2.575\\
+6 & 11969.7 & 2.361 & 12285.6 & 2.544\\
+7 & 11944.7 & 2.357 & 12243.9 & 2.507\\
+8 & 11930.4 & 2.357 & 12214.0 & 2.487\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{What decides $p$.} AIC keeps falling up to order 8, but validation RMSE stops improving at $p=7$ (2.357, the same at $p=8$). We take the smaller order, $p=7$. This is not a weekly effect, since the ACF shows no weekly cycle; it is just where the improvement ends. \textbf{What decides $q$.} Validation RMSE for the MA model falls from 3.069 at $q=1$ to 2.487 at $q=8$ and is still falling. There is no ACF cut-off because the autocorrelation decays slowly, so a long MA is needed to imitate what a short AR does. We fix $q=8$, the largest order we tested, and note that this is a limit of our search and not an optimum.
+
+\subsection{ARIMA (Task 8)}
+Because $d=0$, the ARIMA family reduces to ARMA($p,q$). We fitted all orders with $p$ and $q$ from 0 to 3 on the training set. The top models are statistically tied: the best validation RMSE is 2.323 for $(2,2)$, and the top seven are within $0.015^\circ$C, with AIC within about 2 points of each other. We selected \textbf{ARIMA(2,0,2)} for its lowest validation RMSE and small parameter count. Dropping the second MA term, ARIMA(2,0,1), has almost the same validation RMSE (2.333) but an AIC about 35 points worse, so we kept it.
+
+\begin{table}[H]\centering
+\caption{Best ARMA($p,q$) orders on validation.}
+\begin{tabular}{lrr}
+\toprule
+$(p,q)$ & AIC & Validation RMSE\\
+\midrule
+(2, 2) & 11864.3 & 2.323\\
+(3, 1) & 11862.0 & 2.324\\
+(3, 3) & 11866.0 & 2.325\\
+(3, 2) & 11864.4 & 2.325\\
+(1, 3) & 11862.2 & 2.326\\
+(2, 1) & 11899.3 & 2.333\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Seasonal model (Task 9)}
+A seasonal ARIMA with period 365 is too heavy to fit, and a period of 7 is wrong for this data. Instead we model ARMA(2,2) errors with yearly sine and cosine terms (Fourier terms) as regressors. We tried 1 to 4 harmonics and selected the number on validation data.
+
+\begin{table}[H]\centering
+\caption{Number of Fourier harmonics $K$, ARIMA(2,0,2) errors.}
+\begin{tabular}{rrr}
+\toprule
+$K$ & AIC & Validation RMSE\\
+\midrule
+1 & 11764.9 & 2.284\\
+2 & 11765.5 & 2.278\\
+3 & 11768.7 & 2.277\\
+4 & 11770.6 & 2.264\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Adding the seasonal terms lowers the in-sample AIC by about 100 points (11864 to about 11765), so the yearly cycle is statistically real. On new data the gain is smaller, because yesterday's temperature already carries much of the seasonal information. AIC prefers $K=1$ and validation RMSE prefers $K=4$; the differences are small, and following the brief we chose $K=4$ on validation.
+
+%% ---------------- 4 Neural ----------------
+\section{Neural network models (Tasks 10 and 11)}
+The neural models use the same split. The input is scaled with a scaler fitted on the training set only. Each window of the previous \emph{lag} days predicts the next day, and windows are built so that validation and test targets are exactly the same calendar days as in the classical models (we checked this in code). We trained SimpleRNN and LSTM networks with the Adam optimiser~\cite{adam}, mean squared error loss and early stopping on validation loss. For each network type we searched 12 random configurations from lag in $\{3,7,14,30\}$, units in $\{16,32,64\}$, layers in $\{1,2\}$, learning rate in $\{0.001,0.003,0.01\}$ and batch size in $\{16,32,64\}$. This is a small random search and not an exhaustive grid, and each configuration was run with one random seed.
+
+\begin{table}[H]\centering
+\caption{Top five RNN configurations on validation.}
+\begin{tabular}{rrrrrrr}
+\toprule
+Lag & Units & Layers & LR & Batch & Epochs & Val RMSE\\
+\midrule
+30 & 16 & 1 & 0.001 & 32 & 60 & 2.307\\
+14 & 16 & 1 & 0.001 & 32 & 47 & 2.325\\
+30 & 16 & 2 & 0.003 & 64 & 25 & 2.333\\
+7 & 32 & 1 & 0.003 & 16 & 31 & 2.366\\
+7 & 64 & 1 & 0.001 & 32 & 14 & 2.367\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]\centering
+\caption{Top five LSTM configurations on validation.}
+\begin{tabular}{rrrrrrr}
+\toprule
+Lag & Units & Layers & LR & Batch & Epochs & Val RMSE\\
+\midrule
+30 & 16 & 2 & 0.003 & 64 & 42 & 2.288\\
+30 & 16 & 1 & 0.001 & 32 & 100 & 2.292\\
+14 & 16 & 2 & 0.010 & 16 & 24 & 2.305\\
+30 & 64 & 1 & 0.003 & 32 & 38 & 2.311\\
+14 & 16 & 1 & 0.001 & 32 & 84 & 2.312\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Observations.} The lag mattered most: all of the top LSTM configurations use a lag of 30 or 14, and lag 3 was worst. Small networks were enough: the top three RNN configurations all use 16 units, so extra capacity added no accuracy. The top two configurations of each type differ by less than the noise one random seed could cause, so we do not claim that the chosen settings are uniquely best. Lag 30 was the largest value in our search space, so a longer window could help further. The best LSTM used lag 30, 16 units, 2 layers, learning rate 0.003 and batch size 64; the best RNN used lag 30, 16 units, 1 layer, learning rate 0.001 and batch size 32. One LSTM run used all 100 epochs, so the epoch cap may have cut it short.
+
+\subsection{Test-set comparison of all models}
+\begin{table}[H]\centering\small
+\caption{One-step-ahead results on the test set (validation RMSE for reference).}\label{tab:test}
+\resizebox{\textwidth}{!}{\begin{tabular}{lrrrrrrr}
+\toprule
+Model & RMSE & MAE & MAPE \% & sMAPE \% & $R^2$ & vs persist. & Val RMSE\\
+\midrule
+ARIMA(2,0,2) + Fourier, $K=4$ & 2.184 & 1.720 & 19.49 & 17.26 & 0.686 & $-15.1\%$ & 2.264\\
+LSTM (tuned) & 2.208 & 1.721 & 18.70 & 17.50 & 0.679 & $-14.2\%$ & 2.288\\
+ARIMA(2,0,2) & 2.233 & 1.739 & 19.44 & 17.50 & 0.672 & $-13.2\%$ & 2.323\\
+AR(7) & 2.261 & 1.759 & 19.84 & 17.64 & 0.664 & $-12.1\%$ & 2.357\\
+RNN (tuned) & 2.265 & 1.769 & 19.60 & 17.92 & 0.663 & $-11.9\%$ & 2.307\\
+AR(1) & 2.428 & 1.928 & 21.87 & 19.23 & 0.612 & $-5.6\%$ & 2.468\\
+MA(8) & 2.431 & 1.927 & 22.18 & 19.16 & 0.611 & $-5.5\%$ & 2.487\\
+Persistence (yesterday) & 2.572 & 2.036 & 22.35 & 21.03 & 0.565 & -- & n/a\\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\fig{figA_rmse.png}{Test RMSE of every model (one-step-ahead, July 1989 to December 1990).}
+\fig{fig_pred_vs_actual.png}{Predicted versus actual minimum temperature on the test set for the two best models.}
+
+\textbf{Observations.} (1) Every fitted model beats persistence, and the best (ARIMA with Fourier terms) reduces test RMSE by 15.1\%. (2) The tuned LSTM is within 1.1\% of the best linear model (2.208 against 2.184), which is too small a gap to call a real difference with one seed per configuration. Non-linearity therefore adds little for one-step-ahead daily temperature: yesterday's value and the season do most of the work. (3) The seasonal ARIMA is told the day of the year, while the networks must infer it from at most 30 days of history. (4) MA(8) with eight parameters is no better than AR(1) with one, so a pure moving-average model suits this persistent series poorly. (5) MAPE hardly separates the models (19\% to 22\%) because of nights near $0^\circ$C; RMSE and sMAPE are more informative. (6) The test period is slightly easier than validation for every model, so comparisons should be made within one split and not across them.
+
+%% ---------------- 5 Action ----------------
+\section{From forecasts to action (Task 12)}\label{sec:action}
+A low RMSE does not by itself say whether a forecast improves a decision. We therefore turn each forecast into a yes/no action. A rule acts on a night when its forecast is below $6^\circ$C. The total cost of a rule over the test period is
+\[
+\text{cost} = (\text{nights acted})\times C + (\text{cold nights missed})\times L .
+\]
+We compare seven rules: do nothing; a persistence habit (act if last night's minimum was below $6^\circ$C); the point forecast of ARIMA+Fourier; the point forecast of the LSTM; and three LSTM lower-quantile rules at the 2.5\%, 10\% and 20\% levels.
+
+The reason for the quantile rules is a standard result: a rule that acts when the $\tau$-quantile forecast falls below the threshold is cost-optimal when $\tau = C/L$. At $L/C=10$ the right level would be 10\%; at $L/C=40$ it would be 2.5\%. The point forecasts aim at the middle of the distribution, which is the wrong place to look for cold extremes.
+
+The test set has 0 nights below $0^\circ$C, 2 below $2^\circ$C, 11 below $4^\circ$C and 49 below $6^\circ$C. Counts at the lower thresholds are too small for a cost analysis, which is why we use $6^\circ$C.
+
+\begin{table}[H]\centering
+\caption{How each rule handled the cold nights (threshold $6^\circ$C, 548 test nights, 49 cold).}
+\begin{tabular}{lrrrr}
+\toprule
+Rule & Nights acted & Cold nights caught & Missed & False alarms\\
+\midrule
+Point: ARIMA+Fourier & 11 & 10 & 39 & 1\\
+Point: LSTM & 29 & 18 & 31 & 11\\
+Persistence habit & 49 & 20 & 29 & 29\\
+Interval: $\tau=20\%$ & 143 & 37 & 12 & 106\\
+Interval: $\tau=10\%$ & 233 & 46 & 3 & 187\\
+Interval: $\tau=2.5\%$ & 293 & 49 & 0 & 244\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Observations.} The point forecasts catch only 10 and 18 of the 49 cold nights (20\% and 37\%). Both models pull forecasts toward the typical value for the season, so extremes are under-predicted. The model with the lowest RMSE is therefore the weakest decision tool at most cost ratios. At the other extreme the 2.5\% rule catches every cold night but acts on 53\% of all nights. Only 0.9\% of test nights fell below the 2.5\% quantile forecast, 6.4\% below the 10\% one and 15.1\% below the 20\% one, so the lower tails are conservative: the 10\% model behaves like a 6\% quantile.
+
+\begin{table}[H]\centering
+\caption{Total cost on the test set (units of $C$).}
+\begin{tabular}{lrrr}
+\toprule
+Rule & $L/C=5$ & $L/C=10$ & $L/C=20$\\
+\midrule
+Do nothing & 245 & 490 & 980\\
+Persistence habit & 194 & 339 & 629\\
+Point: ARIMA+Fourier & 206 & 401 & 791\\
+Point: LSTM & 184 & 339 & 649\\
+Interval: $\tau=2.5\%$ & 293 & 293 & 293\\
+Interval: $\tau=10\%$ & 248 & 263 & 293\\
+Interval: $\tau=20\%$ & 203 & 263 & 383\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\fig{figB_cost.png}{Total cost of each rule as the loss ratio $L/C$ rises (threshold $6^\circ$C, test period).\label{fig:cost}}
+
+\textbf{Break-even ratios.} Acting on the persistence habit beats doing nothing above $L/C=2.45$. The 10\% interval rule beats the persistence habit above $L/C=7.08$ and the LSTM point rule above 7.29. The LSTM point rule beats the persistence habit only below $L/C=10$, and by a small margin. This gives three regimes: below about 2.5 do not act on forecasts; between about 2.5 and 7 the simple habit is nearly as good as the model; above about 7 use the interval rule with $\tau$ close to $C/L$.
+
+\textbf{Choosing the rule without peeking at the test set.} To check that these conclusions do not come from looking at the test cost, we chose the cheapest rule on validation at each $L/C$ and then measured its cost on test (Table~\ref{tab:valchosen}). The rule chosen on validation was never worse than the persistence habit on test, and its extra cost relative to the best rule on test (the regret) was 0 at four of the seven ratios and at most 30 units (about 10 to 11\% of the best cost). Validation contained only 30 cold nights, so the exact regime boundaries are approximate.
+
+\begin{table}[H]\centering\footnotesize
+\caption{Rule chosen on validation, cost measured on test (units of $C$).}\label{tab:valchosen}
+\resizebox{\textwidth}{!}{\begin{tabular}{rlrrrrrr}
+\toprule
+$L/C$ & Rule chosen on validation & Test cost & Do nothing & Persistence & Saving vs nothing & Saving vs persist. & Regret\\
+\midrule
+3 & Point: LSTM & 122 & 147 & 136 & 17.0\% & 10.3\% & 0\\
+5 & Persistence & 194 & 245 & 194 & 20.8\% & 0.0\% & 10\\
+7 & Persistence & 252 & 343 & 252 & 26.5\% & 0.0\% & 25\\
+10 & Interval $\tau=10\%$ & 263 & 490 & 339 & 46.3\% & 22.4\% & 0\\
+15 & Interval $\tau=10\%$ & 278 & 735 & 484 & 62.2\% & 42.6\% & 0\\
+20 & Interval $\tau=10\%$ & 293 & 980 & 629 & 70.1\% & 53.4\% & 0\\
+30 & Interval $\tau=10\%$ & 323 & 1470 & 919 & 78.0\% & 64.9\% & 30\\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+%% ---------------- 6 Probabilistic ----------------
+\section{Probabilistic forecast (Task 13)}
+We trained two LSTM networks, one for the 2.5\% quantile and one for the 97.5\% quantile, by minimising the pinball loss~\cite{koenker}. Together they form a 95\% prediction interval. Both use the best LSTM settings from Section 4 (lag 30, 16 units, 2 layers, learning rate 0.003, batch size 64), scaled inputs, and early stopping on validation loss. We evaluate with the prediction interval coverage probability (PICP, the share of actual values inside the interval) and the mean prediction interval width (MPIW).
+
+\begin{table}[H]\centering
+\caption{Interval quality for the 95\% interval.}
+\begin{tabular}{lrrrrr}
+\toprule
+Set & PICP & MPIW ($^\circ$C) & Below lower & Above upper & Crossings\\
+\midrule
+Validation & 95.62\% & 9.59 & 1.5\% & 2.9\% & 0\\
+Test & 95.44\% & 9.56 & 0.9\% & 3.6\% & 0\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\fig{fig_interval_test.png}{95\% LSTM prediction interval against actual minimum temperature, test period, with the $6^\circ$C threshold.}
+
+\textbf{Observations.} Coverage is close to the 95\% target on both sets, so the interval is well calibrated overall. With 548 days and strongly correlated neighbouring days, the sampling error on a coverage figure is about one percentage point or more, so we describe it as close to nominal and not as exact. The two tails are not symmetric: only 0.9\% of test nights fall below the lower bound (the target is 2.5\%) while 3.6\% fall above the upper bound (the target is 2.5\%), and the validation set shows the same pattern. The lower bound is conservative, which matters for a cold-night decision. The average width of $9.56^\circ$C is about 10\% wider than a Gaussian interval built from the point-forecast RMSE ($2\times 1.96\times 2.208\approx 8.7^\circ$C). The interval is wide, about the size of the yearly swing of $12^\circ$C, because daily minimum temperature is inherently noisy. The two models never crossed, so the lower bound was always below the upper bound. Validation data were used for early stopping, so the validation figures are slightly optimistic; the test figures are the ones to quote.
+
+%% ---------------- 7 Risk ----------------
+\section{Risk and reliability (Task 14)}
+The test costs above come from one period with 49 cold nights, and these nights occur in runs rather than independently. To quantify how much luck is involved, we resampled the test period 2,000 times in blocks of 14 consecutive days (a moving block bootstrap, see reference~\cite{kunsch}) and recomputed each rule's saving. The block length of 14 days was our choice.
+
+\begin{table}[H]\centering\small
+\caption{Saving of the 10\% interval rule and of the LSTM point rule, block bootstrap (median, 5th to 95th percentile).}
+\begin{tabular}{rlll}
+\toprule
+$L/C$ & Rule & Saving vs doing nothing & Saving vs persistence habit\\
+\midrule
+5 & Interval $\tau=10\%$ & $-3\%$ ($-44$ to $+24$) & $-28\%$ ($-66$ to $-4$)\\
+5 & LSTM point & $+24\%$ ($+11$ to $+35$) & $+5\%$ ($-2$ to $+12$)\\
+10 & Interval $\tau=10\%$ & $+46\%$ ($+23$ to $+60$) & $+22\%$ ($-1$ to $+38$)\\
+10 & LSTM point & $+30\%$ ($+17$ to $+41$) & $+0.3\%$ ($-9$ to $+8$)\\
+20 & Interval $\tau=10\%$ & $+70\%$ ($+56$ to $+78$) & $+54\%$ ($+37$ to $+65$)\\
+20 & LSTM point & $+33\%$ ($+19$ to $+44$) & $-3\%$ ($-14$ to $+6$)\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{How the interval turns into reliability.} The interval adds value only when a missed cold night is expensive relative to acting. At $L/C=10$ the 10\% interval rule saves money against doing nothing in 99.8\% of resamples and beats the LSTM point rule in 94\%, but against the persistence habit it is positive in only 94\% and its 5th percentile is slightly negative. At $L/C=20$ it beats the habit in every resample. At $L/C=5$ it is worse than the habit in 98\% of resamples. So the interval does not simply make decisions ``more reliable''; it lets the operator trade false alarms for missed events, and the right trade depends on $L/C$.
+
+\textbf{How wrong can it be, and what would it cost?} At $L/C=10$ the rule acts on 233 of 548 nights and 187 of those actions were unnecessary (cost $187C$), while it missed 3 cold nights (cost $3L=30C$). If the real $L/C$ is about half of what we assume (around 5), the same rule costs more than the habit. Choosing the rule on validation instead of test cost at most about 10 to 11\% more than the best rule. The LSTM point rule is the robust but small win: it saves in at least 99.8\% of resamples against doing nothing at all three ratios, but most of that saving is available for free from the persistence habit, which saves 21\%, 31\% and 36\% against doing nothing at $L/C=5$, $10$ and $20$.
+
+\textbf{Limitations.} One test period; 49 cold nights that cluster; a threshold ($6^\circ$C) chosen after seeing the counts; $L/C$ assumed; one random seed per neural configuration; a small random search; and a lag range (maximum 30 days) that may be too short for the networks to infer the season.
+
+%% ---------------- 8 Management assessment ----------------
+\section{Management assessment}
+\textbf{How effective is the solution?} For a site where a missed cold night costs more than about ten times a night of acting, the interval rule roughly halves the cost of the decision: 46\% less than doing nothing and 22\% less than the simple habit at $L/C=10$ (62\% and 43\% at $L/C=15$). The saving grows with $L/C$ and is limited by false alarms, since the rule acts on 43\% of nights.
+
+\textbf{What is it worth?} With illustrative values $C=20$ and $L=200$ currency units, the 548-night test period would cost 9,800 with no action, 6,780 with the habit and 5,260 with the interval rule, that is 4,540 saved against doing nothing and 1,520 against the habit, or about 3,000 and 1,000 per year. These figures are assumptions. A site that can measure its own $C$ and $L$ can read its saving from Table~\ref{tab:valchosen} or from Figure~\ref{fig:cost}.
+
+\textbf{When not to use it.} If $L/C$ is below about 7, the persistence habit performs as well as the model at no cost, so we would not deploy the model. If $L/C$ is below about 2.5, even the habit does not pay and the operator should not act on forecasts.
+
+%% ---------------- 9 Conclusion ----------------
+\section{Conclusion}
+The best classical model (ARIMA with yearly Fourier terms) and a tuned LSTM~\cite{hochreiter} both beat persistence by 14 to 15\% in RMSE and are close to each other, so non-linear modelling gives little advantage for one-step-ahead daily temperature. The more important result is about decisions: the model with the lowest RMSE was not the best tool for the cold-night decision, because point forecasts under-predict extremes. A lower-quantile forecast from the pinball-loss LSTM caught 46 of 49 cold nights at the 10\% level and saved 46\% of cost at $L/C=10$, but only when missed nights are expensive. Future work would use more years of data, a longer input window or an explicit seasonal input for the networks, a measured cost for a real site, and a probability level tuned for the actual $L/C$.
+
+%% ---------------- References ----------------
+\begin{thebibliography}{99}
+\bibitem{box} Box, G.~E.~P., Jenkins, G.~M., Reinsel, G.~C. and Ljung, G.~M. (2015). \emph{Time Series Analysis: Forecasting and Control}, 5th ed. Wiley.
+\bibitem{hynd} Hyndman, R.~J. and Athanasopoulos, G. (2021). \emph{Forecasting: Principles and Practice}, 3rd ed. OTexts.
+\bibitem{adf} Dickey, D.~A. and Fuller, W.~A. (1979). Distribution of the estimators for autoregressive time series with a unit root. \emph{Journal of the American Statistical Association}, 74(366), 427--431.
+\bibitem{kpss} Kwiatkowski, D., Phillips, P.~C.~B., Schmidt, P. and Shin, Y. (1992). Testing the null hypothesis of stationarity against the alternative of a unit root. \emph{Journal of Econometrics}, 54, 159--178.
+\bibitem{hochreiter} Hochreiter, S. and Schmidhuber, J. (1997). Long short-term memory. \emph{Neural Computation}, 9(8), 1735--1780.
+\bibitem{koenker} Koenker, R. and Bassett, G. (1978). Regression quantiles. \emph{Econometrica}, 46(1), 33--50.
+\bibitem{adam} Kingma, D.~P. and Ba, J. (2015). Adam: a method for stochastic optimization. \emph{International Conference on Learning Representations}.
+\bibitem{kunsch} K\"unsch, H.~R. (1989). The jackknife and the bootstrap for general stationary observations. \emph{Annals of Statistics}, 17(3), 1217--1241.
+\bibitem{jofaval-melbourne} jofaval (2026). \emph{melbourne-temperature-timeseries: Timeseries Data Analysis and Forecasting of the daily min temperature in Melbourne from 1981 to 1990}. GitHub. \url{https://github.com/jofaval/melbourne-temperature-timeseries}.
+
+\bibitem{statsmodels} Seabold, S. and Perktold, J. (2010). statsmodels: econometric and statistical modeling with Python. \emph{Proceedings of the 9th Python in Science Conference}.
+\end{thebibliography}
+
+%% ---------------- AI disclaimer and appendix ----------------
+\newpage
+\section*{AI disclaimer}
+\addcontentsline{toc}{section}{AI disclaimer}
+ We used Claude (Anthropic), Google AI mode and ChatGPT as tool during this project for: suggesting the project structure and the order of analysis, drafting and debugging Python code, suggesting methods (one-step-ahead evaluation with frozen parameters, Fourier terms for yearly seasonality, the block bootstrap, and the $C/L$ quantile rule for decisions), and checking the numbers in this report against the notebook output. We ran all the code ourselves in Google Colab and the numbers in this report come from our own runs. We chose the decision context and the cost scenarios, and the observations and conclusions are based on our results.
+
+\section*{Appendix: reproducibility}
+\addcontentsline{toc}{section}{Appendix: reproducibility}
+Repository: \GitHub. The notebook runs top to bottom in Google Colab with pandas, NumPy, statsmodels~\cite{statsmodels}, scikit-learn, TensorFlow/Keras and matplotlib. Fixed seeds: neural networks 42, random search 0, bootstrap 1 (2,000 resamples, 14-day blocks). Files: the notebook, the data file, \texttt{test\_results.csv}, \texttt{test\_predictions.csv}, \texttt{decision\_table.csv}, \texttt{model\_summary.csv} and the figures.
+
+\end{document}
