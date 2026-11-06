@@ -1,0 +1,9 @@
+# Packages used by the notebook (Python 3.10 or newer)
+# Versions are not pinned yet. Replace each line with the exact version from your Colab run
+# (see the version-printing cell in the chat) so others reproduce your results.
+numpy
+pandas
+matplotlib
+statsmodels
+scikit-learn
+tensorflow
