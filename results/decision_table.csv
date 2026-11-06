@@ -1,0 +1,8 @@
+L_over_C,rule_chosen_on_val,test_cost,do_nothing,persistence,saving_vs_nothing_pct,saving_vs_persistence_pct
+3,Point: LSTM,122,147,136,17.0,10.3
+5,Persistence rule,194,245,194,20.8,0.0
+7,Persistence rule,252,343,252,26.5,0.0
+10,Quantile tau=0.1,263,490,339,46.3,22.4
+15,Quantile tau=0.1,278,735,484,62.2,42.6
+20,Quantile tau=0.1,293,980,629,70.1,53.4
+30,Quantile tau=0.1,323,1470,919,78.0,64.9
